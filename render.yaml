@@ -2,7 +2,7 @@ services:
   - type: web
     name: cricoracle
     runtime: node
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm install --include=dev && ./node_modules/.bin/tsc
     startCommand: npm start
     envVars:
       - key: OPENAI_API_KEY
