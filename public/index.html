@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CricOracle — Ask the AI Umpire</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">🏏</div>
+      <h1>CricOracle</h1>
+      <p class="tagline">Ask anything about Cricket Laws — powered by official MCC rules</p>
+    </header>
+
+    <div class="status-bar">
+      <span id="status-text">Checking index...</span>
+      <button id="crawl-btn" class="btn-secondary">Index Laws</button>
+    </div>
+
+    <div class="chat-container" id="chat">
+      <div class="welcome-message">
+        <p>Ask me any cricket law question, like:</p>
+        <div class="examples">
+          <button class="example-btn" onclick="useExample(this)">When is a batsman out LBW?</button>
+          <button class="example-btn" onclick="useExample(this)">What happens if the ball hits a fielder's helmet on the ground?</button>
+          <button class="example-btn" onclick="useExample(this)">How many times can a bowler bowl in one innings?</button>
+          <button class="example-btn" onclick="useExample(this)">Is Mankad run out legal?</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <input
+        type="text"
+        id="question-input"
+        placeholder="Ask a cricket law question..."
+        autocomplete="off"
+      />
+      <button id="ask-btn" onclick="askQuestion()">Ask</button>
+    </div>
+  </div>
+
+  <div id="crawl-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Indexing Cricket Laws</h2>
+      <p>Crawling laws.mcc.org.uk, chunking text, and embedding with OpenAI...</p>
+      <div class="spinner"></div>
+      <p id="crawl-progress">This takes 2-3 minutes. Please wait.</p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
