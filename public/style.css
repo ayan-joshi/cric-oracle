@@ -8,7 +8,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #0a0f1e;
   color: #e8eaf0;
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -17,25 +17,26 @@ body {
 .container {
   width: 100%;
   max-width: 780px;
-  padding: 24px 16px;
+  padding: 16px 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  max-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
 }
 
 header {
   text-align: center;
-  padding: 20px 0 16px;
+  padding: 12px 0 12px;
 }
 
 .logo {
-  font-size: 48px;
-  margin-bottom: 8px;
+  font-size: 36px;
+  margin-bottom: 6px;
 }
 
 h1 {
-  font-size: 2rem;
+  font-size: clamp(1.5rem, 5vw, 2rem);
   font-weight: 700;
   color: #ffffff;
   letter-spacing: -0.5px;
@@ -43,16 +44,18 @@ h1 {
 
 .tagline {
   color: #8892a4;
-  font-size: 0.9rem;
-  margin-top: 6px;
+  font-size: 0.85rem;
+  margin-top: 5px;
+  padding: 0 8px;
 }
 
 .stack {
   color: #3b82f6;
-  font-size: 0.75rem;
-  margin-top: 8px;
+  font-size: 0.72rem;
+  margin-top: 7px;
   letter-spacing: 0.3px;
   opacity: 0.8;
+  padding: 0 8px;
 }
 
 .status-bar {
@@ -123,12 +126,14 @@ h1 {
   background: #141929;
   border: 1px solid #1e2740;
   color: #a0aec0;
-  padding: 8px 14px;
+  padding: 10px 14px;
+  min-height: 44px;
   border-radius: 20px;
   cursor: pointer;
   font-size: 0.82rem;
   transition: all 0.2s;
   text-align: left;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .example-btn:hover {
@@ -213,9 +218,10 @@ h1 {
   color: #e8eaf0;
   padding: 12px 16px;
   border-radius: 10px;
-  font-size: 0.92rem;
+  font-size: 16px; /* prevents iOS auto-zoom on focus */
   outline: none;
   transition: border-color 0.2s;
+  min-height: 48px;
 }
 
 #question-input:focus {
@@ -235,8 +241,14 @@ h1 {
   font-size: 0.92rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s, transform 0.1s;
   white-space: nowrap;
+  min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#ask-btn:active {
+  transform: scale(0.97);
 }
 
 #ask-btn:hover {
