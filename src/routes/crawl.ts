@@ -6,8 +6,13 @@ import { insertDocuments, clearDocuments, getDocumentCount } from '../supabase';
 
 const router = Router();
 
-// POST /crawl — crawl, chunk, embed, and store
-router.post('/', async (_req: Request, res: Response) => {
+// POST /crawl — crawl, chunk, embed, and store (admin only)
+router.post('/', async (req: Request, res: Response) => {
+  const secret = process.env.CRAWL_SECRET;
+  if (secret && req.headers['x-crawl-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
     console.log('\n=== Starting indexing pipeline ===');
 

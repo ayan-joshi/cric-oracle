@@ -12,15 +12,18 @@
       <div class="logo">🏏</div>
       <h1>CricOracle</h1>
       <p class="tagline">Ask anything about Cricket Laws — powered by official MCC rules</p>
+      <p class="stack">RAG · OpenAI · Supabase pgvector · 42 MCC Laws + ICC Playing Conditions</p>
     </header>
 
-    <div class="status-bar">
+    <!-- status bar hidden from UI — admin use only -->
+    <div class="status-bar" style="display:none">
       <span id="status-text">Checking index...</span>
-      <button id="crawl-btn" class="btn-secondary">Index Laws</button>
+      <!-- <button id="crawl-btn" class="btn-secondary">Index Laws</button> -->
     </div>
 
     <div class="chat-container" id="chat">
       <div class="welcome-message">
+        <p>Powered by official MCC Laws and ICC Playing Conditions for all formats — not an LLM guess.</p>
         <p>Ask me any cricket law question, like:</p>
         <div class="examples">
           <button class="example-btn" onclick="useExample(this)">When is a batsman out LBW?</button>
