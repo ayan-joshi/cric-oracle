@@ -1,3 +1,5 @@
+const API_BASE = 'https://cric-oracle.onrender.com';
+
 const chat = document.getElementById('chat');
 const input = document.getElementById('question-input');
 const askBtn = document.getElementById('ask-btn');
@@ -9,7 +11,7 @@ const crawlProgress = document.getElementById('crawl-progress');
 // Check index status on load
 async function checkStatus() {
   try {
-    const res = await fetch('/crawl/status');
+    const res = await fetch(`${API_BASE}/crawl/status`);
     const data = await res.json();
     if (data.indexed > 0) {
       statusText.textContent = `Ready — ${data.indexed} law chunks indexed`;
@@ -29,7 +31,7 @@ crawlBtn.addEventListener('click', async () => {
   crawlBtn.disabled = true;
 
   try {
-    const res = await fetch('/crawl', { method: 'POST' });
+    const res = await fetch(`${API_BASE}/crawl`, { method: 'POST' });
     const data = await res.json();
 
     if (data.success) {
@@ -73,7 +75,7 @@ async function askQuestion() {
   const loadingEl = addLoading();
 
   try {
-    const res = await fetch('/query', {
+    const res = await fetch(`${API_BASE}/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
