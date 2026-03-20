@@ -87,7 +87,7 @@ async function askQuestion() {
     if (data.error) {
       addMessage('assistant', `Error: ${data.error}`);
     } else {
-      addAssistantMessage(data.answer);
+      addAssistantMessage(data.answer, data.usedWebSearch);
     }
   } catch (err) {
     loadingEl.remove();
@@ -107,12 +107,17 @@ function addMessage(role, text) {
   return div;
 }
 
-function addAssistantMessage(answer) {
+function addAssistantMessage(answer, usedWebSearch) {
   const div = document.createElement('div');
   div.className = 'message assistant';
 
+  const badge = usedWebSearch
+    ? `<span class="web-badge">🌐 Live web search via Toolhouse</span>`
+    : '';
+
   div.innerHTML = `
     <div class="bubble">
+      ${badge}
       ${escapeHtml(answer).replace(/\n/g, '<br>')}
     </div>
   `;

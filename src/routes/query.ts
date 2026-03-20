@@ -52,7 +52,11 @@ router.post('/', async (req: Request, res: Response) => {
 
   try {
     const result = await queryRAG(question.trim());
-    return res.json(result);
+    return res.json({
+      answer: result.answer,
+      sources: result.sources,
+      usedWebSearch: result.usedWebSearch ?? false,
+    });
   } catch (err) {
     console.error('Query error:', err);
     return res.status(500).json({ error: String(err) });
