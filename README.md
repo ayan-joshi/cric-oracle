@@ -2,7 +2,7 @@
 
 An AI cricket umpire that answers questions about cricket laws with the authority of a senior ICC panel umpire. Ask it anything — LBW rules, free hits, Mankad, helmet penalties, format differences between Test/ODI/T20I — and it gives you a direct verdict with exact law citations.
 
-**Live demo:** [your-url-here]
+**Live demo:** https://cric-oracle.vercel.app/
 
 ---
 
