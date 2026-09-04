@@ -359,3 +359,131 @@ h1 {
 .chat-container::-webkit-scrollbar { width: 4px; }
 .chat-container::-webkit-scrollbar-track { background: transparent; }
 .chat-container::-webkit-scrollbar-thumb { background: #1e2740; border-radius: 2px; }
+
+/* ---------------------------------------------------------------------------
+   Citations — the retrieved passages behind each answer.
+   Collapsed by default so they support the answer without burying it.
+   --------------------------------------------------------------------------- */
+
+.rag-badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: rgba(34, 139, 92, 0.12);
+  color: #1c7a4f;
+  border: 1px solid rgba(34, 139, 92, 0.25);
+}
+
+.inline-cite {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.78em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: rgba(34, 139, 92, 0.14);
+  color: #1c7a4f;
+  vertical-align: 1px;
+}
+
+.sources {
+  margin-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 10px;
+}
+
+.sources summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #5c6672;
+  list-style: none;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.sources summary::-webkit-details-marker { display: none; }
+
+.sources summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+
+.sources[open] summary::before { transform: rotate(90deg); }
+.sources summary:hover { color: #1c7a4f; }
+
+.source-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-list li {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+.cite-num {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1c7a4f;
+  padding-top: 1px;
+}
+
+.cite-body { min-width: 0; }
+
+.cite-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #2b3440;
+  margin-bottom: 2px;
+}
+
+.cite-title a { color: #1c7a4f; text-decoration: none; }
+.cite-title a:hover { text-decoration: underline; }
+
+.cite-snippet {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: #6b7583;
+  overflow-wrap: anywhere;
+}
+
+.error-bubble {
+  background: rgba(200, 60, 50, 0.07) !important;
+  border: 1px solid rgba(200, 60, 50, 0.22);
+  color: #9d2f27;
+}
+
+.error-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: #7d4a45;
+}
+
+.error-hint code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cite-title { color: #e3e8ee; }
+  .cite-snippet { color: #97a2b0; }
+  .sources { border-top-color: rgba(255, 255, 255, 0.1); }
+  .sources summary { color: #97a2b0; }
+}

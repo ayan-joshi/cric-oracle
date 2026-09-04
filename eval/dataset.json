@@ -1,0 +1,206 @@
+{
+  "description": "Golden set for CricOracle retrieval + answer evaluation. `expectedLaws` lists the MCC Law numbers that a correct answer must be grounded in; any one of them counts as a hit, because several questions are legitimately covered in more than one place.",
+  "corpus": "MCC Laws of Cricket, 2017 Code (3rd Edition, 2022) + ICC Playing Conditions",
+  "cases": [
+    {
+      "id": "lbw-basic",
+      "question": "When is a batsman out LBW?",
+      "expectedLaws": ["36"],
+      "keywords": ["pitches in line", "no ball", "wicket to wicket"],
+      "category": "dismissal"
+    },
+    {
+      "id": "mankad",
+      "question": "Is a Mankad run out legal?",
+      "expectedLaws": ["38", "41.16"],
+      "keywords": ["non-striker", "run out"],
+      "category": "dismissal",
+      "note": "Moved from Law 41.16 (Unfair play) to Law 38.3 (Run out) in the 2022 edition."
+    },
+    {
+      "id": "helmet-ground",
+      "question": "What happens if the ball hits a fielder's helmet placed on the ground?",
+      "expectedLaws": ["28"],
+      "keywords": ["penalty", "5 runs", "helmet"],
+      "category": "fielding"
+    },
+    {
+      "id": "bowler-overs",
+      "question": "How many overs can a bowler bowl in one innings?",
+      "expectedLaws": ["17"],
+      "keywords": ["over", "consecutive"],
+      "category": "over"
+    },
+    {
+      "id": "no-ball-height",
+      "question": "When is a delivery called a no ball for height?",
+      "expectedLaws": ["21", "41"],
+      "keywords": ["waist", "full pitch", "no ball"],
+      "category": "delivery"
+    },
+    {
+      "id": "wide-definition",
+      "question": "What makes a delivery a wide?",
+      "expectedLaws": ["22"],
+      "keywords": ["wide", "reach", "normal cricket stroke"],
+      "category": "delivery"
+    },
+    {
+      "id": "caught-boundary",
+      "question": "Is a catch valid if the fielder steps on the boundary rope?",
+      "expectedLaws": ["19", "33"],
+      "keywords": ["boundary", "grounded", "catch"],
+      "category": "dismissal"
+    },
+    {
+      "id": "hit-twice",
+      "question": "Can a batter hit the ball twice?",
+      "expectedLaws": ["34"],
+      "keywords": ["twice", "guarding the wicket"],
+      "category": "dismissal"
+    },
+    {
+      "id": "obstructing",
+      "question": "When is a batter out for obstructing the field?",
+      "expectedLaws": ["37"],
+      "keywords": ["obstruct", "wilfully", "distract"],
+      "category": "dismissal"
+    },
+    {
+      "id": "timed-out",
+      "question": "How long does an incoming batter have before being timed out?",
+      "expectedLaws": ["40"],
+      "keywords": ["three minutes", "timed out"],
+      "category": "dismissal"
+    },
+    {
+      "id": "stumped-vs-runout",
+      "question": "What is the difference between stumped and run out?",
+      "expectedLaws": ["38", "39"],
+      "keywords": ["wicket-keeper", "out of ground", "run out", "stumped"],
+      "category": "dismissal"
+    },
+    {
+      "id": "dead-ball",
+      "question": "When does the ball become dead?",
+      "expectedLaws": ["20"],
+      "keywords": ["dead ball", "settled", "wicket-keeper"],
+      "category": "play"
+    },
+    {
+      "id": "leg-bye-conditions",
+      "question": "When can leg byes be scored?",
+      "expectedLaws": ["23"],
+      "keywords": ["leg bye", "attempted to play", "avoid"],
+      "category": "scoring"
+    },
+    {
+      "id": "follow-on-margin",
+      "question": "What lead does a team need to enforce the follow-on in a Test match?",
+      "expectedLaws": ["14"],
+      "keywords": ["200", "follow-on"],
+      "category": "match-format"
+    },
+    {
+      "id": "substitute-fielder",
+      "question": "Can a substitute fielder bowl or keep wicket?",
+      "expectedLaws": ["24"],
+      "keywords": ["substitute", "shall not bowl"],
+      "category": "fielding"
+    },
+    {
+      "id": "wicket-down",
+      "question": "What counts as the wicket being put down?",
+      "expectedLaws": ["29"],
+      "keywords": ["bail", "stump", "removed"],
+      "category": "play"
+    },
+    {
+      "id": "hit-wicket",
+      "question": "When is a batter out hit wicket?",
+      "expectedLaws": ["35"],
+      "keywords": ["hit wicket", "striking the ball", "setting off"],
+      "category": "dismissal"
+    },
+    {
+      "id": "boundary-six",
+      "question": "When is a boundary six awarded instead of four?",
+      "expectedLaws": ["19"],
+      "keywords": ["six", "boundary", "full pitch"],
+      "category": "scoring"
+    },
+    {
+      "id": "appeals-withdraw",
+      "question": "Can a captain withdraw an appeal after the umpire has given a batter out?",
+      "expectedLaws": ["31"],
+      "keywords": ["withdraw", "appeal", "consent"],
+      "category": "officiating"
+    },
+    {
+      "id": "unfair-ball-tampering",
+      "question": "What are the penalties for ball tampering?",
+      "expectedLaws": ["41"],
+      "keywords": ["condition of the ball", "5 penalty runs", "unfair"],
+      "category": "conduct"
+    },
+    {
+      "id": "spirit-of-cricket",
+      "question": "What does the Spirit of Cricket say about respecting opponents?",
+      "expectedLaws": [],
+      "keywords": ["spirit", "respect", "captains"],
+      "category": "preamble",
+      "note": "Preamble has no law number; keyword match only."
+    },
+    {
+      "id": "free-hit-t20",
+      "question": "What are the rules for a free hit in a T20 international?",
+      "expectedLaws": [],
+      "keywords": ["free hit", "no ball", "field"],
+      "category": "icc-playing-conditions",
+      "format": "t20i"
+    },
+
+    {
+      "id": "cite-law-36-1-2",
+      "question": "What does Law 36.1.2 say?",
+      "expectedLaws": ["36"],
+      "keywords": ["pitches in line"],
+      "category": "citation-lookup"
+    },
+    {
+      "id": "cite-law-41-6",
+      "question": "Explain Law 41.6",
+      "expectedLaws": ["41"],
+      "keywords": ["dangerous", "short pitched"],
+      "category": "citation-lookup"
+    },
+    {
+      "id": "cite-law-21-no-ball",
+      "question": "Law 21 no ball",
+      "expectedLaws": ["21"],
+      "keywords": ["no ball"],
+      "category": "citation-lookup"
+    },
+    {
+      "id": "cite-law-38-3",
+      "question": "What is Law 38.3?",
+      "expectedLaws": ["38"],
+      "keywords": ["non-striker"],
+      "category": "citation-lookup"
+    },
+    {
+      "id": "cite-law-19-boundaries",
+      "question": "Law 19 boundaries",
+      "expectedLaws": ["19"],
+      "keywords": ["boundary"],
+      "category": "citation-lookup"
+    },
+    {
+      "id": "cite-clause-28-helmet",
+      "question": "Law 28.2 wicket-keeper gloves helmet",
+      "expectedLaws": ["28"],
+      "keywords": ["helmet", "protective"],
+      "category": "citation-lookup"
+    }
+  ]
+}

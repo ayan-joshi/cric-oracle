@@ -1,261 +1,229 @@
 # CricOracle 🏏
 
-An AI cricket umpire that answers questions about cricket laws with the authority of a senior ICC panel umpire. Ask it anything — LBW rules, free hits, Mankad, helmet penalties, format differences between Test/ODI/T20I — and it gives you a direct verdict with exact law citations.
+An AI cricket umpire that answers questions about cricket laws — LBW, free hits, Mankad, helmet penalties, format differences between Test/ODI/T20I — with a direct verdict, an exact law citation, and the source passages it used.
+
+It is a **hybrid-retrieval RAG system**: dense vector search and lexical full-text search run in parallel inside Postgres, get fused by Reciprocal Rank Fusion, and are reranked by an LLM before a single word is generated.
+
+Every retrieval claim below is measured by `npm run eval` against a 28-case golden set, not asserted.
 
 **Live demo:** https://cric-oracle.vercel.app/
 
 ---
 
-## What It Does
+## Measured performance
 
-- Covers all 42 MCC Laws of Cricket (2017 Code, 3rd Edition 2022)
-- Covers ICC Playing Conditions for all three formats — Test, ODI, T20I
-- Gives authoritative answers with exact clause citations (e.g. "Law 36.1.2", "ICC T20I Clause 41.6")
-- Explains format differences where they exist
-- Plain language — written for players and fans, not lawyers
+Against `eval/dataset.json` — 28 graded questions, each annotated with the MCC Law numbers a correct answer must be grounded in.
+
+**Retrieval, at candidate depth (k=20 — the set handed to the reranker):**
+
+| Retriever | recall@20 |
+|---|---|
+| Dense only | 96.4% |
+| **Hybrid (RRF, 1:1)** | **100.0%** |
+
+**Answers** (28 cases, LLM-judged):
+
+| Metric | Score |
+|---|---|
+| Groundedness — every claim supported by retrieved passages | 80.4% |
+| Correctness — the cricket ruling is right | 87.5% |
+| Cited a specific Law or Clause | 100.0% |
+
+**Where hybrid earns its place** — exact citation lookups, the query type dense vectors are structurally bad at:
+
+| Case | Dense | Hybrid |
+|---|---|---|
+| `cite-law-38-3` | miss | **#2** |
+| `cite-law-41-6` | #5 | **#1** |
+| `cite-law-21-no-ball` | #6 | **#2** |
 
 ---
 
-## Tech Stack
+## Why hybrid retrieval
+
+Pure vector search is the default in most RAG tutorials, and it is systematically bad at a query type this corpus attracts.
+
+Embeddings capture *meaning*, so "when is a batter out leg before?" retrieves the LBW law beautifully. But **"what does Law 36.1.2 say?"** is a *lexical* query: `36.1.2` is a near-meaningless token to an embedding model, which will happily return Law 3, Law 6, or anything about dismissals. Conversely, pure keyword search fails colloquial questions — "Mankad" appears nowhere in the MCC Laws.
+
+So CricOracle runs both and fuses them:
+
+```
+                    ┌─ dense (pgvector HNSW, cosine) ──┐
+question → rewrite ─┤                                  ├─ RRF → rerank → answer
+                    └─ lexical (tsvector GIN, ts_rank) ┘
+```
+
+**Reciprocal Rank Fusion** scores each document as `Σ 1/(k + rank_in_that_list)`, using only *ranks*, never scores. Cosine similarity (0–1, clustered near 0.7–0.9) and `ts_rank_cd` (unbounded, corpus-dependent) are on incomparable scales and cannot be meaningfully averaged. Ranks are scale-free, need no per-corpus normalisation, and degrade gracefully when one retriever returns nothing.
+
+---
+
+## Three things the eval caught that intuition got wrong
+
+The harness paid for itself immediately. Each of these shipped as a migration under `supabase/`.
+
+**1. `LIMIT` without `ORDER BY` (migration 002).** The lexical CTE ranked every match with `row_number()`, then `LIMIT 40` kept an *arbitrary* subset — routinely discarding the top-ranked lexical hits before fusion. Measured as a 13-point recall regression. Hybrid was *worse* than dense and looked like a feature.
+
+**2. AND-semantics on natural-language questions (migration 002).** `websearch_to_tsquery` joins terms with AND, so `"When is a batsman out LBW?"` became `batsman & lbw` — requiring a chunk to contain every term. Most chunks matched nothing. Fixed by OR-joining; `ts_rank_cd` still ranks by how many terms matched. AND suits keyword search boxes, not questions.
+
+**3. A corpus-specific stopword (migration 003).** After the OR fix, `"What does Law 36.1.2 say?"` became `'law' | '36.1.2'`. Postgres strips *what/does/is*, but **`law` is not a stopword** — and in a corpus of cricket *Laws* it matches nearly every chunk. `ts_rank_cd` applies no IDF weighting, so it cannot discount a term that matches everything. Stripping domain-generic terms (`law`, `clause`, `rule`, `cricket`, …) left `'36.1.2'` alone. In this corpus, "law" is a stopword for the same reason "the" is in English.
+
+**And one methodological error of my own:** I spent all three migrations judging at recall@6 and concluding hybrid hurt. But nothing consumes 6 raw retrieval results — retrieval hands **20 candidates to a reranker whose entire job is fixing order**. Measuring at k=6 penalised hybrid for bad *ordering*, precisely the failure the next stage repairs. At k=20 the ranking reverses and hybrid hits 100%.
+
+> Recall is the only property no downstream stage can recover. A chunk absent from the candidate set can never be reranked into it, and can never be cited by the model. Match the metric to the pipeline stage.
+
+---
+
+## The pipeline
+
+### Phase 1 — Indexing (`npm run index`)
+
+```
+lords.org (42 laws) ─┐
+                     ├→ crawl → clause-aware chunk → embed → Supabase (pgvector + tsvector)
+ICC PDFs (3 formats)─┘
+```
+
+1. **Crawl** — 44 MCC law pages plus 3 ICC Playing Conditions PDFs, retaining canonical URL, law number, title and format.
+2. **Chunk** — splits on *clause boundaries* (`36.1.2 The bowler delivers…`), falling back to paragraphs then sentences. Target ~320 words, ceiling 450, 60-word overlap.
+3. **Contextual headers** — every chunk is prefixed with its own provenance before embedding:
+   ```
+   [Law 36 - Leg Before Wicket | MCC Laws of Cricket]
+   36.1 Out LBW. The striker is out LBW if all the circumstances…
+   ```
+   A bare fragment like *"the ball must not bounce more than once"* is nearly unretrievable. Under a header naming its law it matches both the vector query and the lexical query. **98% of chunks now carry a law/clause number** (previously 0%).
+4. **Embed** — `text-embedding-3-small`, 1536-dim, batched 64 at a time.
+5. **Store** — one row per chunk with embedding, tsvector and metadata.
+
+### Phase 2 — Query
+
+1. **Rewrite** — user phrasing → corpus vocabulary. `"is mankad legal"` → `"run out non-striker leaving ground before bowler releases ball Law 38"`. Also detects a format filter and whether the question needs live data.
+2. **Hybrid retrieve** — dense + lexical + RRF in one Postgres function, over-fetching 20 candidates.
+3. **Rerank** — one listwise LLM pass narrows 20 → 6. Listwise beats pointwise because the model compares passages against each other rather than guessing absolute relevance.
+4. **Answer** — grounded in numbered passages, with inline `[n]` citations mapped to the source list in the UI.
+
+Retrieval over-fetches for **recall**; the reranker recovers **precision**.
+
+---
+
+## Tech stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Node.js + Express + TypeScript |
-| AI (Embeddings) | OpenAI `text-embedding-3-small` |
-| AI (Answers) | OpenAI `gpt-4o-mini` |
-| Vector Database | Supabase (PostgreSQL + pgvector) |
-| Web Scraping | Axios + Cheerio |
-| PDF Parsing | pdf-parse |
-| Frontend | Plain HTML + CSS + JavaScript |
+| Answers | Claude (`claude-opus-5`), OpenAI `gpt-4o-mini` automatic fallback |
+| Rewrite / rerank / judge | Claude Haiku 4.5 — cheap, runs on every query |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| Vector search | Supabase Postgres + pgvector, HNSW index |
+| Lexical search | Postgres `tsvector` + GIN index |
+| Fusion | Reciprocal Rank Fusion, in-database |
+| Live data | Claude server-side `web_search` |
+| Frontend | Plain HTML/CSS/JS, no build step |
+
+**On the provider split:** answers run on Claude, but embeddings stay on OpenAI because **Anthropic has no embeddings endpoint**. `OPENAI_API_KEY` is required even when Claude generates every answer. If `ANTHROPIC_API_KEY` is unset or failing, generation falls back to OpenAI transparently and the site keeps answering.
 
 ---
 
-## How It Works — The RAG Pipeline
+## Setup
 
-CricOracle uses **RAG (Retrieval-Augmented Generation)**. This is a technique where instead of asking an AI to answer from memory (which can hallucinate), you first fetch the real relevant documents, then ask the AI to answer using only those documents as context.
-
-The full pipeline has two phases:
-
-### Phase 1 — Indexing (one-time setup)
-
-```
-Data Sources → Crawler → Chunker → Embedder → Supabase (pgvector)
-```
-
-1. **Crawl** — fetches all 44 individual law pages from lords.org (one per law) + downloads 3 ICC PDF documents (Test, ODI, T20I Playing Conditions)
-2. **Chunk** — splits each document into overlapping 350-word chunks (with 70-word overlap so no rule gets cut off at a boundary)
-3. **Embed** — converts each chunk into a 1536-dimensional vector using OpenAI's embedding model
-4. **Store** — saves all vectors + original text into Supabase using the pgvector extension
-
-### Phase 2 — Query (every question)
-
-```
-User Question → Embed → Vector Search → Top 10 Chunks → GPT-4o-mini → Answer
-```
-
-1. The user's question is embedded into the same 1536-dimensional vector space
-2. Supabase finds the 10 most similar chunks using cosine similarity (`match_threshold: 0.05`)
-3. Those 10 chunks are passed as context to GPT-4o-mini
-4. GPT answers using only that context — grounded, cited, accurate
-
----
-
-## Project Structure
-
-```
-cricoracle/
-├── src/
-│   ├── index.ts          # Express server entry point
-│   ├── crawler.ts        # Scrapes lords.org + downloads ICC PDFs
-│   ├── chunker.ts        # Splits documents into overlapping chunks
-│   ├── embedder.ts       # OpenAI embedding API calls
-│   ├── rag.ts            # Vector search + GPT answer generation
-│   ├── supabase.ts       # Supabase client, insert/search/clear
-│   └── routes/
-│       ├── crawl.ts      # POST /crawl, GET /crawl/status
-│       └── query.ts      # POST /query + debug routes
-├── public/
-│   ├── index.html        # Frontend UI
-│   ├── style.css         # Styling
-│   └── app.js            # Frontend JS (fetch + render)
-├── package.json
-├── tsconfig.json
-└── .env                  # OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
-```
-
----
-
-## Data Sources
-
-### MCC Laws of Cricket (lords.org)
-44 pages scraped directly from lords.org — one page per law topic:
-- Preamble (Spirit of Cricket)
-- Laws 1–42 (The Players → Players' Conduct)
-- Appendices
-
-Each page is static HTML with the full law text. Scraping individual pages ensures every clause is captured completely — including rules like Law 28.3 (fielder's helmet on the ground) that can be missed in bulk PDF extraction.
-
-### ICC Playing Conditions (PDFs)
-3 official PDFs downloaded from icc-cricket.com:
-- ICC Test Match Playing Conditions
-- ICC ODI Playing Conditions
-- ICC T20I Playing Conditions
-
-These contain format-specific modifications to the base MCC laws — powerplay rules, free hit rules, DLS method, field restriction circles, etc.
-
----
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/crawl/status` | Returns count of indexed chunks |
-| `POST` | `/crawl` | Runs full indexing pipeline |
-| `POST` | `/query` | Ask a cricket question, returns answer |
-| `GET` | `/query/debug?q=question` | Returns raw chunks retrieved for a question |
-| `GET` | `/query/sources` | Returns chunk count per source |
-| `GET` | `/query/search?term=free+hit` | Text search in indexed chunks |
-| `GET` | `/query/sample?source=ICC+T20I+Playing+Conditions` | Shows a raw chunk from a source |
-
----
-
-## Database Schema (Supabase)
-
-```sql
-create table documents (
-  id bigserial primary key,
-  url text,
-  content text,
-  embedding vector(1536)
-);
-
-create index on documents using ivfflat (embedding vector_cosine_ops)
-  with (lists = 100);
-
-create or replace function match_documents(
-  query_embedding vector(1536),
-  match_threshold float,
-  match_count int
-)
-returns table(id bigint, url text, content text, similarity float)
-language sql stable as $$
-  select id, url, content,
-    1 - (embedding <=> query_embedding) as similarity
-  from documents
-  where 1 - (embedding <=> query_embedding) > match_threshold
-  order by embedding <=> query_embedding
-  limit match_count;
-$$;
-```
-
----
-
-## Setup & Run
-
-### Prerequisites
-- Node.js 18+
-- Supabase project with pgvector enabled
-- OpenAI API key
-
-### Install
 ```bash
 npm install
+cp .env.example .env      # then fill it in
 ```
 
-### Environment variables
-Create a `.env` file:
+**1. Apply the schema.** Supabase Dashboard → SQL Editor → New query. Run in order:
 ```
-OPENAI_API_KEY=sk-...
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJ...
-PORT=3001
+supabase/schema.sql
+supabase/002_fix_hybrid_search.sql
+supabase/003_tsquery_domain_stopwords.sql
 ```
+All are idempotent and non-destructive.
 
-### Run (development)
+**2. Index.**
 ```bash
-npm run dev
+npm run index -- --dry-run     # crawl + chunk only, writes nothing
+npm run index                  # full pipeline
+npm run index -- --only=icc    # re-index one source family
 ```
 
-### Build + Run (production)
+**3. Run.**
 ```bash
-npm run build
-npm start
+npm run dev                    # http://localhost:3000
 ```
 
-### Index the laws (one-time)
-Visit `http://localhost:3001` and click **Index Laws**. Takes ~5 minutes. Only needs to be done once — data persists in Supabase.
+---
+
+## Evaluation
+
+```bash
+npm run eval                   # retrieval only — embeddings only, cheap
+npm run eval -- --sweep        # RRF weight sweep
+npm run eval -- --answers      # end-to-end + LLM judge
+EVAL_K=20 npm run eval -- --sweep   # measure at candidate depth
+```
+
+Reports dense and hybrid **side by side**, flagging each case `[hybrid saved]` or `[hybrid lost]`. Without that comparison, "we added hybrid search" is a claim rather than a result.
+
+The judge runs on the cheap utility model deliberately — grading answers with the model that wrote them biases the score.
 
 ---
 
-## Key Design Decisions
+## API
 
-**Why individual law pages instead of one big PDF?**
-The MCC publishes a single PDF but extracting text from it can miss content or misalign sections. Scraping individual pages from lords.org gives clean, complete text per law — every clause is guaranteed present.
-
-**Why chunk size 350 words with 70-word overlap?**
-Too large (500+) and a chunk covers multiple unrelated rules — the wrong part gets retrieved. Too small (100-) and you lose context for the answer. Overlap ensures rules that span a chunk boundary aren't split.
-
-**Why cosine similarity and not keyword search?**
-Keyword search fails for paraphrased questions. "What happens if the ball hits a hat on the ground?" should match Law 28.3 (fielder's helmet) — but "hat" never appears in the law. Cosine similarity on embeddings captures semantic meaning, not exact words.
-
-**Why gpt-4o-mini and not gpt-4o?**
-gpt-4o-mini is 95% as capable at this task (answering from provided context) at ~20x lower cost. The hard work of finding relevant information is done by the vector search — the LLM just needs to synthesize and cite.
-
-**Why match_threshold: 0.05?**
-A higher threshold (0.7+) is common in general RAG systems but cricket law questions can be highly specific. A low threshold ensures we don't miss relevant chunks — it's better to retrieve 10 chunks and let the LLM ignore irrelevant ones than to miss the right chunk entirely.
-
----
-
-## What I Learned Building This
-
-### RAG (Retrieval-Augmented Generation)
-The core pattern for building AI apps that need to answer questions about specific documents. Without RAG, LLMs hallucinate or give outdated answers. With RAG, the LLM is grounded in real source material. Every serious AI product (customer support bots, legal research, documentation assistants) uses some version of this.
-
-### Vector Embeddings
-Text converted to numbers in a high-dimensional space (1536 numbers per piece of text here) where similar meanings are mathematically close together. This is what makes semantic search possible — you're not matching words, you're matching meaning.
-
-### pgvector + Supabase
-PostgreSQL can do vector similarity search via the pgvector extension. Supabase exposes this through their `rpc()` client. The `ivfflat` index (Inverted File with Flat quantization) makes similarity search fast even with thousands of vectors by clustering them into groups (lists=100 here).
-
-### Chunking Strategy
-Documents must be split into smaller pieces before embedding. The key tradeoff: smaller chunks = more precise retrieval but less context per chunk. Larger chunks = more context but risk retrieving chunks that contain the answer buried in unrelated content. Overlap prevents rules from being split across chunks.
-
-### Web Scraping with Cheerio
-Cheerio is a server-side jQuery implementation for parsing HTML. Used axios to fetch pages and cheerio to extract text — removing nav/header/footer elements, then extracting the main content from a priority list of CSS selectors.
-
-### PDF Parsing
-pdf-parse extracts raw text from PDFs. PDF text extraction is imperfect — it can introduce extra whitespace, miss formatting, or misorder columns. Always clean the output with regex (collapsing multiple newlines/spaces) before chunking.
-
-### TypeScript in Node.js
-ts-node-dev for development (compiles + runs + restarts on change), tsc for production build to dist/. The strict mode catches type errors that would silently fail in JavaScript.
-
-### Express routing
-Separating routes into their own Router files (crawl.ts, query.ts) instead of putting everything in index.ts. Each router is mounted at a prefix — `app.use('/crawl', crawlRouter)`.
-
-### System prompt engineering
-The quality of an LLM's answer is heavily influenced by the system prompt. Key techniques used here:
-- Role assignment: "You are a senior ICC panel umpire"
-- Format instructions: "Give verdict first, then reasoning"
-- Citation requirement: "Always cite the exact law or clause"
-- Length control: "3-6 sentences for simple rules, up to 10 for complex"
-- Fallback handling: "Never say 'not covered' unless completely absent"
-
-### Environment Variables
-Secrets (API keys, database URLs) are stored in `.env` files that are never committed to git. The dotenv package loads them at runtime. Production environments (Railway, Render) let you set these in their dashboard.
-
----
-
-## Tricky Questions to Test
-
-| Question | Tests |
+| Endpoint | Purpose |
 |---|---|
-| What happens if the ball hits a fielder's helmet on the ground? | Law 28.3 — penalty runs |
-| Can a batsman be out LBW if the ball pitches outside leg stump? | Law 36 — LBW criteria |
-| What is the free hit rule in T20? | ICC T20I Playing Conditions |
-| Is Mankad run out legal? | Law 38 — run out |
-| Can a batsman be stumped off a wide ball? | Law 39 — stumped |
-| What if both batsmen reach the same end? | Law 38 — who is out |
-| How many fielders can be outside the circle in the powerplay in ODIs? | ICC ODI Playing Conditions |
-| Can a fielder use their cap to field the ball? | Law 28 — fielder's clothing |
-| What happens if a batsman hits the ball twice? | Law 34 — hit the ball twice |
-| Can a runner be given out obstructing the field? | Law 37 — obstructing the field |
+| `GET /health` | Per-dependency status: database, generation provider, config |
+| `POST /query` | `{ "question": "..." }` → answer, numbered sources, diagnostics |
+| `GET /query/debug?q=...` | Dense vs hybrid side by side — reach for this when an answer looks wrong |
+| `GET /query/sources` | Chunk count per source |
+| `GET /crawl/status` | Indexed chunk count |
+| `POST /crawl` | Remote re-index; requires `x-crawl-secret`. Prefer `npm run index`. |
+
+---
+
+## Operational design notes
+
+Learned the hard way, now enforced in code:
+
+- **`/health` names the failing dependency.** An outage once returned 500s from two unrelated causes — a paused Supabase project and a missing web-search key — indistinguishable from outside.
+- **Errors carry real text.** The Supabase client never throws; it returns `{data, error}` where `error` is a plain object, so `String(err)` yields `"[object Object]"`. `describeError()` unpacks message/details/hint/code, and a missing schema returns a `503` naming the file to run.
+- **`/crawl` fails closed.** The guard was `if (secret && header !== secret) reject` — an unset `CRAWL_SECRET` silently left a full re-crawl, and thousands of billed embedding calls, open to anyone.
+- **RLS enforces the read/write split.** Anon key gets `SELECT` only; indexing uses the service-role key. Authorization lives in the database, which fails closed, not in application code, which failed open.
+- **A partial crawl must never replace the corpus.** When lords.org was unreachable the crawler still returned 3 ICC PDFs — non-empty, so a naive `length === 0` check passed, and the swap would have deleted all 42 MCC Laws. `assertCorpusComplete()` aborts before anything is cleared.
+- **Replace per source, not wholesale.** Whole-corpus replacement couples every source to the availability of every other one. `--only=icc` refreshes the PDFs while lords.org is down.
+- **Late swap.** Crawl and embed complete *before* old rows are deleted, so a mid-run failure leaves the site working.
+- **Rate limiting on `/query`.** Every question costs an embedding plus two-to-three LLM calls on a public endpoint.
+- **Web search is never a hard dependency.** It is offered only when the rewrite step judges the question to need live data; its failure never blocks a grounded answer.
+- **Indexing is a CLI, not an HTTP request.** A multi-minute job behind a platform request timeout could be killed mid-swap.
+
+---
+
+## Project layout
+
+```
+src/
+  config.ts     env validation, fails fast at boot; measured retrieval defaults
+  llm.ts        provider layer — Claude primary, OpenAI fallback
+  rag.ts        rewrite → hybrid retrieve → rerank → answer
+  supabase.ts   read/write client split, typed errors, per-source deletes
+  crawler.ts    scraping + PDF parsing, metadata, completeness guard
+  chunker.ts    clause-aware chunking + contextual headers
+  embedder.ts   batched embeddings, query cache
+  eval.ts       retrieval + answer evaluation, RRF weight sweep
+  reindex.ts    npm run index
+  errors.ts     AppError + Supabase error unpacking
+supabase/
+  schema.sql                        tables, HNSW + GIN, RPCs, RLS
+  002_fix_hybrid_search.sql         ORDER BY + OR-semantics fixes
+  003_tsquery_domain_stopwords.sql  corpus-specific stopwords
+eval/
+  dataset.json  28 graded questions with expected law numbers
+```
+
+---
+
+## Known limitations
+
+- **The MCC half of the corpus is stale.** 160 of 757 chunks were indexed by the old pipeline: no contextual headers, no `law_number` metadata. lords.org is currently unreachable from the development network, so those 42 laws cannot be re-crawled. Retrieval metrics should improve again once they are — every citation test case targets an MCC law.
+- **Groundedness is 80.4%**, meaning roughly one answer in five contains a claim the retrieved passages do not fully support. The judge flags these individually in `npm run eval -- --answers`.
+- **No streaming.** Answers arrive in one block; a long Opus response feels slow.
+- **Rate limiting is per-process and in-memory.** Fine for one instance, wrong across replicas.
