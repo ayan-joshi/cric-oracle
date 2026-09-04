@@ -1,8 +1,7 @@
 /**
- * Same-origin when the Express server is serving this file (local dev, Render),
- * cross-origin only when the static build is hosted separately (Vercel).
- * Hardcoding the Render URL unconditionally made local development hit
- * production.
+ * Same-origin when Express serves this file (local dev, Render); cross-origin
+ * only when the static build is hosted separately (Vercel). Hardcoding the
+ * Render URL unconditionally made local development hit production.
  */
 const API_BASE = (() => {
   const host = location.hostname;
@@ -14,16 +13,14 @@ const chat = document.getElementById('chat');
 const input = document.getElementById('question-input');
 const askBtn = document.getElementById('ask-btn');
 const statusText = document.getElementById('status-text');
+const statusDot = document.getElementById('status-dot');
 
 let pending = false;
 
 /**
- * Guarded binding.
- *
- * The previous version did `crawlBtn.addEventListener(...)` on an element that
- * is commented out in index.html. The resulting TypeError aborted the rest of
- * the script, which is why the Enter key and the status check silently stopped
- * working -- only the hoisted function declarations survived.
+ * Guarded binding. The previous version called addEventListener on an element
+ * that had been commented out of the markup; the TypeError aborted the rest of
+ * the script, silently killing the Enter key and the status check.
  */
 function on(id, event, handler) {
   const el = document.getElementById(id);
@@ -31,40 +28,41 @@ function on(id, event, handler) {
   return el;
 }
 
+function setStatus(text, state) {
+  if (statusText) statusText.textContent = text;
+  if (statusDot) statusDot.className = `dot ${state || ''}`.trim();
+}
+
 async function checkStatus() {
-  if (!statusText) return;
   try {
     const res = await fetch(`${API_BASE}/health`);
     const data = await res.json();
     const indexed = data?.checks?.database?.indexed;
 
     if (data.status === 'unhealthy') {
-      statusText.textContent = `Database unavailable — ${data.checks.database.detail}`;
-      statusText.className = 'empty';
+      setStatus('Database unavailable', 'down');
     } else if (indexed > 0) {
-      statusText.textContent = `Ready — ${indexed} law chunks indexed`;
-      statusText.className = 'ready';
+      setStatus(`${indexed.toLocaleString()} passages indexed`, 'ready');
     } else {
-      statusText.textContent = 'No laws indexed yet';
-      statusText.className = 'empty';
+      setStatus('No passages indexed', 'empty');
     }
-  } catch (err) {
-    statusText.textContent = `Server not reachable: ${err.message}`;
-    statusText.className = 'empty';
+  } catch {
+    setStatus('Server unreachable', 'down');
   }
 }
 
-function useExample(btn) {
-  input.value = btn.textContent;
-  input.focus();
+function askExample(question) {
+  input.value = question;
+  askQuestion();
 }
 
 async function askQuestion() {
   const question = input.value.trim();
   if (!question || pending) return;
 
-  const welcome = chat.querySelector('.welcome-message');
-  if (welcome) welcome.remove();
+  // The intro is the empty state -- it goes once a conversation begins.
+  const intro = document.getElementById('intro');
+  if (intro) intro.remove();
 
   addMessage('user', question);
   input.value = '';
@@ -86,7 +84,7 @@ async function askQuestion() {
     if (!res.ok) {
       addError(data.error || `Request failed (${res.status})`, data.code);
     } else {
-      addAssistantMessage(data.answer, data.sources, data.usedWebSearch);
+      addAssistantMessage(data);
     }
   } catch (err) {
     loadingEl.remove();
@@ -94,7 +92,6 @@ async function askQuestion() {
   } finally {
     pending = false;
     askBtn.disabled = false;
-    input.focus();
   }
 }
 
@@ -108,23 +105,24 @@ function addMessage(role, text) {
 }
 
 function addError(message, code) {
+  const hints = {
+    schema_missing: 'The database schema has not been applied. Run <code>supabase/schema.sql</code>.',
+    rate_limited: 'Too many questions in a short window — give it a moment.',
+    crawl_disabled: 'Indexing is disabled because <code>CRAWL_SECRET</code> is not configured.',
+  };
+  const hint = hints[code] ? `<p class="error-hint">${hints[code]}</p>` : '';
+
   const div = document.createElement('div');
   div.className = 'message assistant';
-  const hint =
-    code === 'schema_missing'
-      ? '<p class="error-hint">The database schema has not been applied. Run <code>supabase/schema.sql</code>.</p>'
-      : code === 'rate_limited'
-        ? '<p class="error-hint">Too many questions in a short window — give it a moment.</p>'
-        : '';
   div.innerHTML = `<div class="bubble error-bubble"><strong>Something went wrong.</strong><br>${escapeHtml(message)}${hint}</div>`;
   chat.appendChild(div);
   scrollToBottom();
 }
 
 /**
- * Renders the retrieved passages alongside the answer. The API always returned
- * `sources`, but the old UI dropped them on the floor -- which removed the one
- * thing that lets a reader verify a RAG answer instead of trusting it.
+ * Renders the passages the answer was built from. The API always returned
+ * `sources` and the old UI discarded them, removing the one thing that lets a
+ * reader verify a RAG answer instead of trusting it.
  */
 function renderSources(sources) {
   if (!Array.isArray(sources) || sources.length === 0) return '';
@@ -135,8 +133,7 @@ function renderSources(sources) {
       const title = s.url
         ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${label}</a>`
         : label;
-      return `
-        <li>
+      return `<li>
           <span class="cite-num">[${s.n}]</span>
           <div class="cite-body">
             <div class="cite-title">${title}</div>
@@ -146,33 +143,58 @@ function renderSources(sources) {
     })
     .join('');
 
-  return `
-    <details class="sources">
+  return `<details class="disclosure">
       <summary>${sources.length} source passage${sources.length === 1 ? '' : 's'}</summary>
       <ol class="source-list">${items}</ol>
     </details>`;
 }
 
-function addAssistantMessage(answer, sources, usedWebSearch) {
+/**
+ * Surfaces what retrieval actually did. Without this the hybrid search,
+ * query rewriting and reranking are entirely invisible to a visitor.
+ */
+function renderTrace(d) {
+  if (!d) return '';
+
+  const rows = [];
+  if (d.rewrittenQuery) rows.push(['Search query', `<code>${escapeHtml(d.rewrittenQuery)}</code>`]);
+  if (d.formatFilter) rows.push(['Format filter', escapeHtml(d.formatFilter.toUpperCase())]);
+  if (d.candidates != null && d.used != null) {
+    rows.push(['Retrieved', `${d.candidates} candidates → reranked to ${d.used}`]);
+  }
+  if (d.model) rows.push(['Model', escapeHtml(d.model)]);
+  if (d.latencyMs != null) rows.push(['Latency', `${(d.latencyMs / 1000).toFixed(1)}s`]);
+  if (d.degraded) rows.push(['Degraded', escapeHtml(d.degraded)]);
+
+  if (rows.length === 0) return '';
+
+  const body = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  return `<details class="disclosure">
+      <summary>Retrieval trace</summary>
+      <dl class="trace">${body}</dl>
+    </details>`;
+}
+
+function addAssistantMessage(data) {
   const div = document.createElement('div');
   div.className = 'message assistant';
 
-  const badge = usedWebSearch
-    ? '<span class="web-badge">🌐 Live web search</span>'
-    : '<span class="rag-badge">📖 Grounded in indexed laws</span>';
+  const badge = data.usedWebSearch
+    ? '<span class="badge web">🌐 Live web search</span>'
+    : '<span class="badge rag">📖 Grounded in indexed laws</span>';
 
   // Highlight inline [n] citations so they visibly tie back to the source list.
-  const body = escapeHtml(answer)
+  const body = escapeHtml(data.answer)
     .replace(/\[(\d+)\]/g, '<span class="inline-cite">[$1]</span>')
     .replace(/\n/g, '<br>');
 
-  div.innerHTML = `
-    <div class="bubble">
+  div.innerHTML = `<div class="bubble">
       ${badge}
       ${body}
-      ${renderSources(sources)}
-    </div>
-  `;
+      ${renderSources(data.sources)}
+      ${renderTrace(data.diagnostics)}
+    </div>`;
+
   chat.appendChild(div);
   scrollToBottom();
 }
@@ -180,11 +202,9 @@ function addAssistantMessage(answer, sources, usedWebSearch) {
 function addLoading() {
   const div = document.createElement('div');
   div.className = 'message assistant';
-  div.innerHTML = `
-    <div class="loading-bubble">
+  div.innerHTML = `<div class="loading-bubble">
       <div class="dots"><span></span><span></span><span></span></div>
-    </div>
-  `;
+    </div>`;
   chat.appendChild(div);
   scrollToBottom();
   return div;
@@ -202,6 +222,13 @@ function escapeHtml(str) {
 function scrollToBottom() {
   chat.scrollTop = chat.scrollHeight;
 }
+
+// Example buttons are bound by delegation so the intro can be removed and the
+// handler never goes stale.
+chat.addEventListener('click', (e) => {
+  const btn = e.target.closest('.example-btn');
+  if (btn) askExample(btn.textContent.trim());
+});
 
 on('question-input', 'keydown', (e) => {
   if (e.key === 'Enter' && !pending) askQuestion();

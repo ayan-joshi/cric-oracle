@@ -3,7 +3,6 @@ import { queryRAG } from '../rag';
 import { embedText } from '../embedder';
 import { hybridSearch, searchSimilar, getSourceBreakdown } from '../supabase';
 import { AppError } from '../errors';
-import { config } from '../config';
 
 const router = Router();
 
@@ -66,11 +65,15 @@ router.post('/', rateLimit, async (req: Request, res: Response, next: NextFuncti
         (result.diagnostics.degraded ? `, degraded=${result.diagnostics.degraded}` : '')
     );
 
+    // Diagnostics ship in production too: the UI renders them as a retrieval
+    // trace, which is what makes query rewriting, hybrid search and reranking
+    // visible to a reader instead of invisible plumbing. Nothing here is
+    // sensitive -- it is the rewritten query, counts, model name and latency.
     return res.json({
       answer: result.answer,
       sources: result.sources,
       usedWebSearch: result.usedWebSearch,
-      diagnostics: config.nodeEnv === 'production' ? undefined : result.diagnostics,
+      diagnostics: result.diagnostics,
     });
   } catch (err) {
     return next(err);
