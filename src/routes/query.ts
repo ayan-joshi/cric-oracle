@@ -1,65 +1,114 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { queryRAG } from '../rag';
+import { embedText } from '../embedder';
+import { hybridSearch, searchSimilar, getSourceBreakdown } from '../supabase';
+import { AppError } from '../errors';
+import { config } from '../config';
 
 const router = Router();
 
-// GET /query/search?term=free+hit — text search in chunks
-router.get('/search', async (req: Request, res: Response) => {
-  const term = String(req.query.term || '');
-  if (!term) return res.status(400).json({ error: 'term required' });
-  const { default: supabase } = await import('../supabase');
-  const { data } = await supabase.from('documents').select('url, content').ilike('content', `%${term}%`).limit(3);
-  return res.json((data || []).map(d => ({ url: d.url, snippet: d.content.slice(0, 400) })));
-});
+/**
+ * Every question costs an embedding call plus two-to-three LLM calls, all
+ * billed to our key on a public endpoint. A simple per-IP token bucket is the
+ * difference between a demo and an open invoice.
+ */
+const RATE_LIMIT = Number(process.env.RATE_LIMIT_PER_MINUTE) || 12;
+const buckets = new Map<string, { count: number; resetAt: number }>();
 
-// GET /query/sample?source=ICC+T20I+Playing+Conditions — shows a raw chunk
-router.get('/sample', async (req: Request, res: Response) => {
-  const source = String(req.query.source || 'ICC T20I Playing Conditions');
-  const { default: supabase } = await import('../supabase');
-  const { data } = await supabase.from('documents').select('content, url').eq('url', source).limit(3);
-  return res.json((data || []).map(d => ({ url: d.url, content: d.content.slice(0, 500) })));
-});
+function rateLimit(req: Request, res: Response, next: NextFunction) {
+  const ip = req.ip ?? 'unknown';
+  const now = Date.now();
+  const bucket = buckets.get(ip);
 
-// GET /query/sources — shows chunk count per source
-router.get('/sources', async (_req: Request, res: Response) => {
-  const { default: supabase } = await import('../supabase');
-  const { data } = await supabase.from('documents').select('url');
-  const counts: Record<string, number> = {};
-  for (const row of (data || [])) {
-    counts[row.url] = (counts[row.url] || 0) + 1;
+  if (!bucket || now > bucket.resetAt) {
+    buckets.set(ip, { count: 1, resetAt: now + 60_000 });
+    return next();
   }
-  return res.json(counts);
-});
 
-// GET /query/debug?q=question — shows raw chunks retrieved
-router.get('/debug', async (req: Request, res: Response) => {
-  const question = String(req.query.q || '');
-  if (!question) return res.status(400).json({ error: 'q param required' });
-  const { embedText } = await import('../embedder');
-  const { searchSimilar } = await import('../supabase');
-  const embedding = await embedText(question);
-  const matches = await searchSimilar(embedding, 5);
-  return res.json(matches.map(m => ({ similarity: m.similarity, url: m.url, snippet: m.content.slice(0, 300) })));
-});
+  if (bucket.count >= RATE_LIMIT) {
+    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({
+      error: `Rate limit reached (${RATE_LIMIT} questions/minute). Try again in ${retryAfter}s.`,
+      code: 'rate_limited',
+    });
+  }
 
-// POST /query — ask a cricket law question
-router.post('/', async (req: Request, res: Response) => {
-  const { question } = req.body;
+  bucket.count++;
+  return next();
+}
 
-  if (!question || typeof question !== 'string' || question.trim().length === 0) {
-    return res.status(400).json({ error: 'question is required' });
+// Periodically drop expired buckets so the map cannot grow without bound.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of buckets) {
+    if (now > bucket.resetAt) buckets.delete(ip);
+  }
+}, 60_000).unref();
+
+// POST /query -- ask a cricket law question
+router.post('/', rateLimit, async (req: Request, res: Response, next: NextFunction) => {
+  const { question } = req.body ?? {};
+
+  if (typeof question !== 'string' || question.trim().length === 0) {
+    return next(new AppError('A non-empty "question" field is required.', 400, 'bad_request'));
+  }
+  if (question.length > 500) {
+    return next(new AppError('Question must be 500 characters or fewer.', 400, 'bad_request'));
   }
 
   try {
     const result = await queryRAG(question.trim());
+
+    console.log(
+      `[query] "${question.trim().slice(0, 60)}" -> ${result.diagnostics.used}/${result.diagnostics.candidates} chunks, ` +
+        `${result.diagnostics.latencyMs}ms, web=${result.usedWebSearch}` +
+        (result.diagnostics.degraded ? `, degraded=${result.diagnostics.degraded}` : '')
+    );
+
     return res.json({
       answer: result.answer,
       sources: result.sources,
-      usedWebSearch: result.usedWebSearch ?? false,
+      usedWebSearch: result.usedWebSearch,
+      diagnostics: config.nodeEnv === 'production' ? undefined : result.diagnostics,
     });
   } catch (err) {
-    console.error('Query error:', err);
-    return res.status(500).json({ error: String(err) });
+    return next(err);
+  }
+});
+
+// GET /query/debug?q=... -- side-by-side dense vs hybrid retrieval
+router.get('/debug', async (req: Request, res: Response, next: NextFunction) => {
+  const question = String(req.query.q ?? '');
+  if (!question) return next(new AppError('q param required', 400, 'bad_request'));
+
+  try {
+    const embedding = await embedText(question);
+    const [dense, hybrid] = await Promise.all([
+      searchSimilar(embedding, 5),
+      hybridSearch(question, embedding, 5),
+    ]);
+
+    const shape = (m: { similarity: number; score?: number; source: string; law_number: string | null; content: string }) => ({
+      similarity: Number(m.similarity?.toFixed(4)),
+      score: m.score !== undefined ? Number(m.score.toFixed(5)) : undefined,
+      source: m.source,
+      law: m.law_number,
+      snippet: m.content.slice(0, 200),
+    });
+
+    return res.json({ question, dense: dense.map(shape), hybrid: hybrid.map(shape) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /query/sources -- chunk count per source
+router.get('/sources', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    return res.json(await getSourceBreakdown());
+  } catch (err) {
+    return next(err);
   }
 });
 
